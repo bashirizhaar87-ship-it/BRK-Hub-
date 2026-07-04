@@ -1,89 +1,86 @@
 <?php
-// Path: BRK-Hub/api/download.php
+require_once __DIR__ . '/database/connection.php';
 
-header('Content-Type: application/json');
-// FIX: connection.php ki jagah config.php ko include kiya kyonke connection uske andar pehle se hai
-require_once __DIR__ . '/config.php';
-
-function getClientIP() {
+/*
+  Get client IP
+*/
+function getClientIP()
+{
     if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
         return $_SERVER['HTTP_CF_CONNECTING_IP'];
     }
+
     if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
         return trim(explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0]);
     }
+
     return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 }
 
-function detectPlatform($url, $manual) {
-    if ($manual !== "auto" && in_array($manual, ['youtube', 'instagram', 'facebook', 'tiktok'])) {
-        return $manual;
-    }
+/*
+  Detect platform (basic)
+*/
+function detectPlatform($url)
+{
     $url = strtolower($url);
-    if (strpos($url, "youtube.com") !== false || strpos($url, "youtu.be") !== false) return "youtube";
-    if (strpos($url, "instagram.com") !== false) return "instagram";
-    if (strpos($url, "facebook.com") !== false) return "facebook";
-    if (strpos($url, "tiktok.com") !== false) return "tiktok";
-    return "unknown";
+
+    if (strpos($url, 'youtube') !== false) return 'YouTube';
+    if (strpos($url, 'facebook') !== false) return 'Facebook';
+    if (strpos($url, 'instagram') !== false) return 'Instagram';
+    if (strpos($url, 'tiktok') !== false) return 'TikTok';
+
+    return 'Other';
 }
 
-function saveHistory($conn, $url, $platform, $status, $ip, $userAgent) {
-    $stmt = $conn->prepare("INSERT INTO download_history (url, platform, status, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)");
-    if ($stmt) {
-        $stmt->bind_param("sssss", $url, $platform, $status, $ip, $userAgent);
-        $stmt->execute();
-        $stmt->close();
-    }
+/*
+  Save download record
+*/
+function saveDownload($conn, $url, $platform, $status, $ip)
+{
+    $stmt = $conn->prepare("
+        INSERT INTO download_history (url, platform, status, ip_address)
+        VALUES (?, ?, ?, ?)
+    ");
+
+    $stmt->bind_param("ssss", $url, $platform, $status, $ip);
+    return $stmt->execute();
 }
 
-$url = trim($_POST['url'] ?? '');
-$platformInput = trim($_POST['platform'] ?? 'auto');
+/*
+  Main logic
+*/
+$url = $_POST['url'] ?? '';
+
+if (empty($url)) {
+    die("No URL provided");
+}
+
 $ip = getClientIP();
-$userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$platform = detectPlatform($url);
 
-if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Please enter a valid video URL."
-    ]);
-    exit;
+/*
+  Simple validation
+*/
+if (!filter_var($url, FILTER_VALIDATE_URL)) {
+    saveDownload($conn, $url, $platform, 'failed', $ip);
+    die("Invalid URL");
 }
 
-// Check if downloads are enabled globally from config/database
-if (isset($downloads_enabled) && $downloads_enabled === "0") {
-    echo json_encode([
-        "status" => "error",
-        "message" => "Downloads are currently disabled by the administrator."
-    ]);
-    exit;
-}
+/*
+  Here you can later add real processing logic
+  (video/audio download, API call, etc.)
+*/
 
-$platform = detectPlatform($url, $platformInput);
+$status = 'success';
 
-function generateRealDownloadLink($url, $platform) {
-    // FIX: Dummy example.com domain hata diya hai. 
-    // Agar aapke paas koi paid/personal video scraping API engine hai toh uska link yahan aayega.
-    // Filhaal yeh direct video URL hi return karega testing ke liye.
-    return $url; 
-}
+// Save record
+saveDownload($conn, $url, $platform, $status, $ip);
 
-$download_url = generateRealDownloadLink($url, $platform);
-
-if ($download_url) {
-    saveHistory($conn, $url, $platform, 'success', $ip, $userAgent);
-    echo json_encode([
-        "status" => "success",
-        "platform" => $platform,
-        "download_url" => $download_url
-    ]);
-} else {
-    saveHistory($conn, $url, $platform, 'failed', $ip, $userAgent);
-    echo json_encode([
-        "status" => "error",
-        "message" => "Failed to extract video links from this platform."
-    ]);
-}
-
-$conn->close();
-?>
-
+/*
+  Response
+*/
+echo json_encode([
+    "status" => "ok",
+    "message" => "Download recorded successfully",
+    "platform" => $platform
+]);
